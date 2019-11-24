@@ -3,11 +3,14 @@
 ;; * Header
 ;; Copyright 2006 Ye Wenbin
 ;;           2014-2019 Feng Shu
+;;           2019-2020 yang honghai
 
 ;; Author: Ye Wenbin <wenbinye@163.com>
 ;;         Feng Shu <tumashu@163.com>
+;;         yang honghai <jianchiyiye123@sohu.com>
+
 ;; URL: https://github.com/tumashu/pyim
-;; Keywords: convenience, Chinese, pinyin, input-method
+;; Keywords: convenience, Chinese, pinyin, input-method cipin
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -64,6 +67,7 @@
 ;; 1. pyim 支持全拼，双拼，五笔和仓颉，其中对全拼的支持最好。
 ;; 2. pyim 通过添加词库的方式优化输入法。
 ;; 3. pyim 使用文本词库格式，方便处理。
+;; 4. pyim 增加词拼，高效处理cyl文档。
 
 ;; ** 安装
 ;; 1. 配置 melpa 源，参考：http://melpa.org/#/getting-started
@@ -1138,7 +1142,7 @@ Only useful when use posframe."
 在六年历史的笔记本上会有一秒的延迟. 这时建议换用 `pyim-dhashcache'.")
 
 ;;;###autoload
-(defvar pyim-title "灵通" "Pyim 在 mode-line 中显示的名称.")
+(defvar pyim-title "词拼" "Pyim 在 mode-line 中显示的名称.")
 (defvar pyim-extra-dicts nil "与 `pyim-dicts' 类似, 用于和 elpa 格式的词库包集成。.")
 
 (defvar pyim-pinyin-shenmu
@@ -1335,7 +1339,7 @@ dcache 文件的方法让 pyim 正常工作。")
       (define-key map (vector i) 'pyim-self-insert-command)
       (setq i (1+ i)))
     (dolist (i (number-sequence ?1 ?9))
-      (define-key map (char-to-string i) 'pyim-page-select-word-by-number))
+      (define-key map (char-to-string i) 'pyim-self-insert-command))
     (define-key map " " 'pyim-page-select-word)
     (define-key map (kbd "C-SPC") 'pyim-page-select-word-simple)
     (define-key map [backspace] 'pyim-entered-delete-backward-char)
@@ -1365,7 +1369,110 @@ dcache 文件的方法让 pyim 正常工作。")
     (define-key map "\C-c" 'pyim-quit-clear)
     map)
   "Pyim 的 Keymap.")
+;; yhh add code here for cipin,
+(defvar cyl-main-list nil "把所有输入登记以规定格式放在一个列表中。")
+(defvar cyl-current-unit-list nil "把当前词语登记在一个列表中。格式：（符号字面字符串　编码索引值　字符串长度　符号类型）")
+(defvar cyl-depth-list nil "从最大列表cyl-main-list到最小列表cyl-current-unit-list以及之间的所有包含该内容的列表集合形成的列表。")
+(defvar pyim-input-status nil "当前输入的状态：等待输入、词语输入、数值输入、字符输入、字符串输入")
+(defvar pyim-detail-status nil "当前输入状态的详细子状态。比如：词语输入可以是汉字片段、数字片段、字母片段、符号片段。")
+(defvar pyim-entered-part-selected "" "当前输入片段中已经解析的部分。")
+(defvar pyim-entered-part-not-selected "" "当前输入片段中尚未解析的部分。")
+(defvar cyl-system-symbol-list nil "系统符号列表。")
+(defvar cyl-user-symbol-list nil "用户符号列表。")
+(defvar cyl-extern-symbol-list nil "外部引用符号列表。")
+(defvar pyim-word-part-list nil)
+(defvar pyim-number-digit-list '(?0 ?1 ?2 ?3 ?4 ?5 ?6 ?7 ?8 ?9))
+(defvar pyim-sign-permit-list '(?\! ?\@ ?\# ?\$ ?\% ?\^ ?\& ?\* ?\- ?\_ ?\+ ?\= ?\\ ?\| ?\~ ?\< ?\>))
+(defvar pyim-display "")
+(defvar pyim-cipin-mode nil "设置词拼模式，否则就使用标准全拼模式。")
+(defvar pyim-test-str ""  "用于测试程序。")
 
+(defun pyim-trigger-for-punctuation()
+  (interactive)
+  (save-excursion
+    (let*  ((cs1 (char-to-string (char-before)))(cs2 (pyim-get-quanjiao-or-banjiao cs1)))
+      (if (not (string= cs1 cs2))
+	  (progn (backward-char 1)(delete-char 1)(insert cs2))))))
+(defun pyim-get-quanjiao-or-banjiao(cs)
+  (let (st rt)
+    (dolist (i pyim-punctuation-dict)
+      (dotimes (j (length i))
+	(if (string= (nth j i) cs)
+	    (progn (setq st 'success)
+		   (if (= j 0)
+		       (setq rt (nth 1 i))
+		     (setq rt (nth 0 i)))))))
+    (if st rt cs)))
+
+(defun pyim-cipin-self-insert-command()
+  (setq pyim-test-str (format "test:%s" pyim-entered-not-selected))
+  (cond
+    ((and (or (eq pyim-input-status 'prepare-input)
+	      (eq pyim-input-status 'number-input))
+	  (pyim-input-number-value-p))
+     (setq pyim-input-status 'number-input)
+     (setq pyim-detail-status 'is-in-number)
+     (setq pyim-number-entered
+	   (concat pyim-number-entered
+		   (char-to-string last-command-event)))
+     (pyim-number-value-handle pyim-number-entered))
+   ((and (or (eq pyim-input-status 'prepare-input)
+	     (eq pyim-input-status 'number-input)
+	     (eq pyim-input-status 'word-input))
+	 (or (pyim-input-chinese-p)
+	     (pyim-input-number-or-sign-permit-p)))
+    (if (eq pyim-input-status 'number-input)
+	(pyim-number-to-word-handle))
+    (setq pyim-input-status 'word-input)
+    (setq pyim-entered (concat pyim-entered (char-to-string last-command-event)))
+    (setq pyim-entered-not-selected
+	  (concat pyim-entered-not-selected (char-to-string last-command-event)))
+   
+    (if (pyim-input-number-or-sign-permit-p)
+	(progn 
+	  (if (eq pyim-detail-status 'is-letter-or-cnstr-part)
+	      (progn
+		(setq pyim-entered-selected "")
+		(setq pyim-entered-not-selected (char-to-string last-command-event))))
+	  (setq pyim-detail-status 'is-number-or-sign-part)
+	  (pyim-entered-numbersign-handle pyim-entered-not-selected))
+	  
+       
+      (if (pyim-input-chinese-p)
+	  (progn 
+	    (setq pyim-detail-status 'is-letter-or-cnstr-part)
+	    (pyim-entered-handle pyim-entered-not-selected)
+	    ))))
+  
+   ;(pyim-candidates
+    ;(pyim-outcome-handle 'candidate-and-last-char)
+    ;(pyim-terminate-translation))
+   
+   ((and (eq pyim-input-status 'word-input)
+	 (string= pyim-entered-not-selected ""))
+    (push (list pyim-entered-selected pyim-outcome pyim-display) pyim-word-part-list)
+    (setq pyim-entered (concat pyim-entered (char-to-string last-command-event)))
+    (setq pyim-entered-selected "")
+    (setq pyim-entered-not-selected (char-to-string last-command-event))
+    (if (pyim-input-number-or-sign-permit-p)
+	(progn 
+	  (pyim-entered-numbersign-handle pyim-entered-not-selected)
+	  (setq pyim-detail-status 'is-number-or-sign-part))
+      (if (pyim-input-chinese-p)
+	  (progn 
+	    (pyim-entered-handle pyim-entered-not-selected)
+	    (setq pyim-detail-status 'is-letter-or-cnstr-part)
+	    ))
+    ))
+   ((and (eq pyim-detail-status 'is-number-or-sign-part)
+	 (pyim-input-number-or-sign-permit-p))
+    (setq pyim-entered-not-selected (concat pyim-entered-not-selected (char-to-string last-command-event)))
+    (pyim-entered-numbersign-handle pyim-entered-not-selected))
+  
+   (t
+    (pyim-outcome-handle 'last-char)
+    (pyim-terminate-translation))))
+;; yhh end code here for cipin.
 ;; ** 将变量转换为 local 变量
 (defvar pyim-local-variable-list
   '(pyim-imobjs
@@ -2141,7 +2248,11 @@ Return the input string.
 (defun pyim-self-insert-command ()
   "Pyim 版本的 self-insert-command."
   (interactive "*")
-  (cond
+  (if pyim-cipin-mode
+      (pyim-cipin-self-insert-command)
+    (if (member last-command-event pyim-number-digit-list)
+	(pyim-page-select-word-by-number)
+      (cond
    ;; 自动上屏器设置： 自动上屏器是一个函数，如果这个函数返回t, 就自
    ;; 动上屏。
    ((cl-some #'(lambda (x)
@@ -2161,7 +2272,7 @@ Return the input string.
     (pyim-terminate-translation))
    (t
     (pyim-outcome-handle 'last-char)
-    (pyim-terminate-translation))))
+    (pyim-terminate-translation))))))
 
 (defun pyim-entered-refresh-1 ()
   "查询 `pyim-entered-buffer' 光标前的拼音字符串（如果光标在行首则为光标后的）, 显示备选词等待用户选择。"
