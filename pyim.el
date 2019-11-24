@@ -1383,10 +1383,14 @@ dcache 文件的方法让 pyim 正常工作。")
 (defvar pyim-word-part-list nil)
 (defvar pyim-number-digit-list '(?0 ?1 ?2 ?3 ?4 ?5 ?6 ?7 ?8 ?9))
 (defvar pyim-sign-permit-list '(?\! ?\@ ?\# ?\$ ?\% ?\^ ?\& ?\* ?\- ?\_ ?\+ ?\= ?\\ ?\| ?\~ ?\< ?\>))
+(defvar pyim-number-value-sign-list '(?\. ?e ?\- ?\+))
 (defvar pyim-display "")
 (defvar pyim-cipin-mode nil "设置词拼模式，否则就使用标准全拼模式。")
 (defvar pyim-test-str ""  "用于测试程序。")
 
+(defun pyim-input-number-value-p()
+  (or (member last-command-event pyim-number-digit-list)
+      (member last-command-event pyim-number-value-sign-list)))
 (defun pyim-trigger-for-punctuation()
   (interactive)
   (save-excursion
@@ -1403,7 +1407,8 @@ dcache 文件的方法让 pyim 正常工作。")
 		       (setq rt (nth 1 i))
 		     (setq rt (nth 0 i)))))))
     (if st rt cs)))
-
+(defun pyim-number-value-handle(number-entered)
+  
 (defun pyim-cipin-self-insert-command()
   (setq pyim-test-str (format "test:%s" pyim-entered-not-selected))
   (cond
